@@ -4,9 +4,11 @@
 # found in the LICENSE file.
 
 import os
+import fnmatch
 import paths
 import subprocess
 import sys
+import glob
 
 # These are the locations of pubspec files that are roots of the dependency
 # graph.  If they contain conflicting requirements for a package 'pub get' will
@@ -26,17 +28,10 @@ ROOT_PUBSPECS = [
     'third_party/flutter/sky/packages/sky_engine',
 ]
 
-# These are the locations of yaml files listing the Dart dependencies of a git
-# project.
-PROJECT_DEPENDENCIES = [
-    'build/dart',
-    'topaz/app/chat',
-    'topaz/app/dashboard',
-    'topaz/app/xi',
-    'topaz/public/dart',
-    'topaz/tools',
-]
-
+def find_dart_dependency_paths(start_dir='./'):
+    for root, dirnames, filenames in os.walk(start_dir):
+        for filename in fnmatch.filter(filenames, 'dart_dependencies.yaml'):
+            yield root
 
 def main():
     if sys.platform.startswith('linux'):
@@ -53,7 +48,7 @@ def main():
     output_path = os.path.join(paths.FUCHSIA_ROOT, 'third_party', 'dart-pkg',
                                'pub')
     flutter_root = os.path.join(paths.FUCHSIA_ROOT, 'third_party', 'dart-pkg',
-                                'git', 'flutter');
+                                'git', 'flutter')
 
     args = [importer_path]
     args.append('--pub')
@@ -64,10 +59,13 @@ def main():
     for root in ROOT_PUBSPECS:
         args.append(os.path.join(paths.FUCHSIA_ROOT, root))
     args.append('--projects')
-    for project in PROJECT_DEPENDENCIES:
-        args.append(os.path.join(paths.FUCHSIA_ROOT, project))
+    for project in find_dart_dependency_paths(paths.FUCHSIA_ROOT):
+        args.append(project)
 
-    subprocess.check_call(args, env={"FLUTTER_ROOT": flutter_root});
+    subprocess.check_call(
+        args, env={
+            "FLUTTER_ROOT": flutter_root
+        })
 
 
 if __name__ == '__main__':
