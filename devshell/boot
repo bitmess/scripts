@@ -5,11 +5,12 @@
 
 ### run bootserver in zedboot disk paver mode
 
-## usage: fx boot [--netboot|--bootfs] [--no-data]
+## usage: fx boot [--netboot|--pave|--bootfs] [--no-data]
 ##                [--artifacts <dir>] [--zircon-dir <dir>] [--fuchsia-dir <dir>]
 ##                [<type>] [bootserver arguments]
 ##   <type>        see "--help" for list (default: x64 for x64 / none for arm64)
 ##   --netboot     Boot from ramdisk containing FVM
+##   --pave        Write Zircon and FVM to device storage before booting (default for x64)
 ##   --bootfs      (deprecated) boot user.bootfs (old ramdisk)
 ##   --no-data     Use FVM images without a /data partition (preserve existing
 ##                 data)
@@ -47,6 +48,7 @@ usage() {
 }
 
 netboot=false
+pave=false
 bootfs=false
 add_data=true
 ip_targ=()
@@ -65,6 +67,9 @@ while [[ "$1" =~ ^- ]]; do
     ;;
   --netboot)
     netboot=true
+    ;;
+  --pave)
+    pave=true
     ;;
   --bootfs)
     bootfs=true
@@ -162,10 +167,16 @@ case "${machine_type}" in
       disks=("${disks[@]}" --efi "${fuchsia_dir}/${efi_block}" \
         --kernc "${fuchsia_dir}/${kernc_vboot}")
     else
-      # For now ARM64 imples netboot.
-      ramdisk="${fuchsia_dir}/netboot-${board}.bin"
-      disks=()
-      add_fvm=false
+      # For now ARM64 defaults to netboot, but can be overridden to pave with the --pave option
+      if $pave; then
+        # send combined kernel/bootdata image?
+        # disks=("${disks[@]}" --zircon-a "${fuchsia_dir}/zircon-boot-blob-${board}.bin")
+        echo "pave baby pave!"
+      else
+        ramdisk="${fuchsia_dir}/netboot-${board}.bin"
+        disks=()
+        add_fvm=false
+      fi
     fi
 esac
 
@@ -186,6 +197,13 @@ else
     disks=("${disks[@]}" --fvm "${fuchsia_dir}/${fvm_data_sparse_block}")
   fi
 fi
+
+echo "${zircon_tools}/bootserver" \
+  "${ip_targ[@]}" \
+  "${disks[@]}" \
+  "${zircon_dir}/${zircon_bin}" \
+  "${ramdisk}" \
+  "${bootserver_args[@]}"
 
 exec "${zircon_tools}/bootserver" \
   "${ip_targ[@]}" \
