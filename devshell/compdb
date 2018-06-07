@@ -5,7 +5,24 @@
 
 ### generate a compilation database for the current build configuration
 
-## usage: fx compdb
+## usage: fx compdb <-z>
+##        -z|--zircon to additonally generate compile_commands.json for Zircon
+##        -z option also concatenates the two compile_commands.json
+
+zirc=0 #boolean for if compiledb has been run
+
+case $1 in
+    -z|--zircon)
+        zirc=1
+    ;;
+    -h|--help)
+        echo "Script to generate compile_commands.json files"
+        echo "-z|--zircon to additonally generate compile_commands.json for Zircon"
+        echo "-z option also concatenates the two compile_commands.json"
+        echo
+        exit
+    ;;
+esac
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"/lib/vars.sh
 fx-config-read
@@ -17,3 +34,37 @@ fx-config-read
 ln -sf "${FUCHSIA_BUILD_DIR}/compile_commands.json" "${FUCHSIA_DIR}/compile_commands.json"
 
 echo "Note: The compile_commands may be incomplete if you are building with variants other than arch."
+
+
+generate_zircon () {
+    exists=0
+    export IFS=":"
+    for p in $PATH; do      #check if compiledb is in PATH
+        if [[ -f $p/compiledb ]]; then
+            exists=1
+        fi
+    done
+
+    if [[ $exists -eq 0 ]]; then
+        echo "compiledb is not in your PATH; " \
+        "compiledb was not run"
+        exit
+    fi
+
+    if [[ !(-d "./zircon") ]]; then
+        echo "Please cd to fuchsia base directory in order" \
+        "to process compiledb correctly; compiledb was not run"
+        exit
+    fi
+
+    ( cd zircon; compiledb -o compile_commands.json -n make ${FUCHSIA_ARCH}) \
+    || echo "An unknown error has occurred"     #TODO what errors could this be?
+}
+
+if [[ $zirc -eq 1 ]]; then
+    generate_zircon
+    #concatenate the two files together by making a tmp file and then removing it when done
+    ./scripts/editors/cat_compile_commands.py zircon/compile_commands.json out/${FUCHSIA_ARCH}/compile_commands.json > compile_commands-tmp.json \
+    && cp compile_commands-tmp.json compile_commands.json \
+    && rm compile_commands-tmp.json
+fi
