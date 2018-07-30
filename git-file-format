@@ -18,6 +18,41 @@ import sys
 import git_utils
 import paths
 
+
+class Command(object):
+    """A formatting command."""
+
+    def __init__(self, cmd, rangefn=None):
+        """Defines a command.
+
+        Args:
+            cmd: A commandline template to run, as a sequence of strings;
+                must accept a bare filename as the final arg.
+            rangefn: Optional function that accepts a sequence of line ranges
+                and returns additional commandline entries. See self.Make()
+                for a description of the ranges.
+        """
+        self._cmd = tuple(cmd)
+        self._rangefn = rangefn
+
+    def Make(self, fname, ranges=()):
+        """Returns the command as a sequence of strings.
+
+        Args:
+            fname: The file to run the command on.
+            ranges: An optional description of modified lines, as a sequence
+                of 1-indexed (start-line, num-modified-lines) pairs. Not all
+                commands will respect these ranges.
+        Returns:
+            The command to format the specified file.
+        """
+        cmd = list(self._cmd)
+        if ranges and self._rangefn:
+            cmd.extend(self._rangefn(ranges))
+        cmd.append(fname)
+        return cmd
+
+
 host_platform = "%s-%s" % (
     platform.system().lower().replace("darwin", "mac"),
     {
@@ -33,14 +68,19 @@ GO_TOOL = os.path.join(paths.BUILDTOOLS_ROOT, host_platform, "go", "bin", "gofmt
 CHECK_HEADER_GUARDS_TOOL = os.path.join(paths.FUCHSIA_ROOT, "scripts", "style",
                                         "check-header-guards.py")
 
-CLANG_CMD = [
-    CLANG_TOOL, "-style=file", "-fallback-style=Google", "-sort-includes",
-    "-i"
-]
-DART_CMD = [DART_TOOL, "-w"]
-GN_CMD = [GN_TOOL, "format"]
-GO_CMD = [GO_TOOL, "-w"]
-FIX_HEADER_GUARDS_COMMAND = [CHECK_HEADER_GUARDS_TOOL, "--fix"]
+CLANG_CMD = Command(
+    (CLANG_TOOL, "-style=file", "-fallback-style=Google", "-sort-includes",
+     "-i"),
+    rangefn=
+    lambda ranges: ['-lines=%d:%d' % (st, st + ln - 1) for st, ln in ranges])
+DART_CMD = Command((DART_TOOL, "-w"))
+GN_CMD = Command((GN_TOOL, "format"))
+GO_CMD = Command((GO_TOOL, "-w"))
+FIX_HEADER_GUARDS_COMMAND = Command((CHECK_HEADER_GUARDS_TOOL, "--fix"))
+PYTHON_CMD = Command(
+    ("yapf", "-i"),
+    rangefn=
+    lambda ranges: ['--lines=%d-%d' % (st, st + ln - 1) for st, ln in ranges])
 
 EXT_TO_COMMANDS = {
     ".cc": [CLANG_CMD],
@@ -52,6 +92,7 @@ EXT_TO_COMMANDS = {
     ".h": [FIX_HEADER_GUARDS_COMMAND, CLANG_CMD],
     ".hh": [CLANG_CMD],
     ".hpp": [CLANG_CMD],
+    ".py": [PYTHON_CMD],
     ".ts": [CLANG_CMD],
 }
 
@@ -71,6 +112,12 @@ def main():
         default=False,
         help="tell me what you're doing")
     parser.add_argument(
+        "--lines",
+        dest="lines",
+        action="store_true",
+        default=False,
+        help="only format modified lines (for supported languages)")
+    parser.add_argument(
         "--all",
         dest="all",
         action="store_true",
@@ -79,10 +126,13 @@ def main():
     args = parser.parse_args()
 
     # Find the files to be formatted.
+    ranges = {}
     if args.all:
         files = git_utils.get_all_files()
     else:
         files = git_utils.get_diff_files()
+        if args.lines:
+            ranges = git_utils.get_modified_lines(files)
 
     if args.verbose:
         print
@@ -92,7 +142,7 @@ def main():
             return
 
         for file in files:
-            print " - " + file
+            print " - " + file + " " + ', '.join(repr(s) for s in ranges[file])
 
     # Run the formatters.
     if args.dry_run:
@@ -110,12 +160,18 @@ def main():
 
         _, extension = os.path.splitext(file)
         if extension not in EXT_TO_COMMANDS:
-            continue
+            # Sniff for a #! header
+            with open(file, 'r') as fp:
+                head = fp.read(80)
+                if head.startswith('#!') and 'python' in head:
+                    extension = '.py'
+            if extension not in EXT_TO_COMMANDS:
+                continue
 
         count += 1
         cmds = EXT_TO_COMMANDS[extension]
         for cmd in cmds:
-            cmd = cmd + [file]
+            cmd = cmd.Make(file, ranges=ranges.get(file, ()))
             if args.dry_run or args.verbose:
                 print cmd
 
